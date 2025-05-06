@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Silly Project Selector</title>
+  <style>
+    body {
+      font-family: "Comic Sans MS", cursive;
+      text-align: center;
+      background: #fef08a;
+      padding-top: 100px;
+      overflow: hidden;
+      animation: wiggle-bg 10s infinite alternate;
+    }
+
+    h1 {
+      font-size: 3em;
+      color: hotpink;
+      transform: rotate(-3deg);
+    }
+
+    select {
+      font-size: 1.2em;
+      padding: 10px;
+      border: 3px dotted blue;
+      background: #fff;
+      border-radius: 10px;
+      margin-top: 20px;
+    }
+
+    button {
+      margin-top: 20px;
+      padding: 12px 24px;
+      font-size: 1.5em;
+      background: limegreen;
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: transform 0.3s ease;
+      position: relative;
+    }
+
+    button.launching {
+      animation: blastoff 1.5s ease-in forwards;
+    }
+
+    @keyframes blastoff {
+      0% { transform: translateY(0) rotate(0); }
+      30% { transform: translateY(-100px) rotate(-5deg); }
+      60% { transform: translateY(-300px) rotate(10deg); }
+      100% { transform: translateY(-1000px) rotate(720deg); opacity: 0; }
+    }
+
+    @keyframes wiggle-bg {
+      from { background-color: #fef08a; }
+      to { background-color: #ffd6e7; }
+    }
+  </style>
+</head>
+<body>
+  <h1>🎉 Silly Project Selector 🎲</h1>
+
+  <select id="projectSelect">
+    <option value="">-- Choose your chaos --</option>
+    <option value="Silly things/buttongame.html">try me</option>
+    <option value="volume.html">🔊 Ridiculous Volume Slider</option>
+    <option value="cursor.html">🖱️ Cursed Cursor</option>
+    <option value="banana.html">🍌 Banana Blaster 9000</option>
+  </select>
+
+  <br>
+  <button id="launchBtn" onclick="goToProject()">🌀 Launch!</button>
+
+  <script>
+    function goToProject() {
+      const select = document.getElementById("projectSelect");
+      const value = select.value;
+      const btn = document.getElementById("launchBtn");
+
+      if (!value) {
+        alert("Pick a project, you silly goose!");
+        return;
+      }
+
+      const honk = new Audio("https://www.soundjay.com/button/beep-07.wav");
+      honk.play();
+
+      btn.classList.add("launching");
+
+      // wait for the animation, then launch!
+      setTimeout(() => {
+        window.location.href = value;
+      }, 1600); // wait until button exits
+    }
+  </script>
+</body>
+</html>
