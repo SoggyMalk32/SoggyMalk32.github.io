@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mod Ban Panel</title>
-    <!-- We import CryptoJS to handle secure encryption/decryption -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121214; color: #e1e1e6; max-width: 600px; margin: 40px auto; padding: 20px; }
         h1 { color: #ff5555; text-align: center; }
@@ -18,68 +16,30 @@
         li { background: #121214; padding: 12px; margin-bottom: 8px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #323238; }
         .unban-btn { width: auto; background: #323238; color: #ff5555; padding: 6px 12px; margin: 0; font-size: 14px; }
         .unban-btn:hover { background: #ff5555; color: white; }
-        .hidden { display: none; }
     </style>
 </head>
 <body>
 
     <h1>🚨 Mod Ban Panel</h1>
     
-    <!-- Step 1: Login Screen -->
-    <div id="loginCard" class="card">
-        <h3>Moderator Authentication</h3>
-        <input type="password" id="modPassword" placeholder="Enter Moderator Password">
-        <button onclick="authenticate()">Unlock Panel</button>
+    <div class="card">
+        <h3>Ban a Player</h3>
+        <input type="text" id="playerId" placeholder="Paste Player ID (Meta/Steam ID)">
+        <button onclick="addBan()">Ban Player</button>
     </div>
 
-    <!-- Step 2: Hidden Admin Dashboard -->
-    <div id="adminPanel" class="hidden">
-        <div class="card">
-            <h3>Ban a Player</h3>
-            <input type="text" id="playerId" placeholder="Paste Player ID (Meta/Steam ID)">
-            <button onclick="addBan()">Ban Player</button>
-        </div>
-
-        <div class="card">
-            <h3>Currently Banned Players</h3>
-            <ul id="banList">Loading list...</ul>
-        </div>
+    <div class="card">
+        <h3>Currently Banned Players</h3>
+        <ul id="banList">Loading list...</ul>
     </div>
 
     <script>
-        // --- PUBLIC CONFIGURATION ---
-        const BIN_ID = "6a59bc45f5f4af5e299ae017"; // Safe to be public (it's just a file pointer)
-        
-        // --- THE KEY PROTECTION ---
-        // 1. To get this encrypted string, run this in your browser console:
-        //    CryptoJS.AES.encrypt("YOUR_JSONBIN_API_KEY", "YOUR_CHOSEN_PASSWORD").toString()
-        // 2. Paste the outputted gibberish string below:
-       const ENCRYPTED_API_KEY = "U2FsdGVkX18HS2ukaHjgHDzaGfSz3E2Egw0VkXdLDbrQqaEHcsnIhLcAVk7Rt4xTRamXucyiVEAbC0uRXLA39231wtFOCgoNNe+xWswJ0ws=";
-        
-        let API_KEY = ""; // Decrypted at runtime
-        let API_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
-        let bannedList = [];
+        // Paste your RAW JSONbin info here! (No encryption needed since the file is hidden)
+        const BIN_ID = "YOUR_BIN_ID_HERE"; 
+        const API_KEY = "YOUR_RAW_JSONBIN_API_KEY_HERE"; 
 
-        // Try to decrypt the key with the user's password
-        function authenticate() {
-    const password = document.getElementById('modPassword').value;
-    try {
-        const bytes = CryptoJS.AES.decrypt(ENCRYPTED_API_KEY, password);
-        const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
-        
-        // As long as it decrypted *something* that isn't completely blank, try it
-        if (decryptedText && decryptedText.length > 5) {
-            API_KEY = decryptedText.trim(); // .trim() removes any accidental hidden spaces
-            document.getElementById('loginCard').classList.add('hidden');
-            document.getElementById('adminPanel').classList.remove('hidden');
-            loadBans();
-        } else {
-            alert("Incorrect Password!");
-        }
-    } catch (e) {
-        alert("Incorrect Password! (Decryption failed)");
-    }
-}
+        const API_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+        let bannedList = [];
 
         async function loadBans() {
             try {
@@ -90,7 +50,7 @@
                 bannedList = data.record.banned_ids || [];
                 renderList();
             } catch (err) {
-                document.getElementById('banList').innerHTML = "<span style='color: red;'>Error loading database.</span>";
+                document.getElementById('banList').innerHTML = "<span style='color: red;'>Error loading database. Check config.</span>";
             }
         }
 
@@ -144,6 +104,8 @@
                 await saveBans(updated);
             }
         }
+
+        loadBans();
     </script>
 </body>
 </html>
