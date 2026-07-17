@@ -62,24 +62,24 @@
 
         // Try to decrypt the key with the user's password
         function authenticate() {
-            const password = document.getElementById('modPassword').value;
-            try {
-                const bytes = CryptoJS.AES.decrypt(ENCRYPTED_API_KEY, password);
-                const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
-                
-                // If it starts with JSONbin's typical key prefix '$2b$', it's correct
-                if (decryptedText.startsWith('$')) {
-                    API_KEY = decryptedText;
-                    document.getElementById('loginCard').classList.add('hidden');
-                    document.getElementById('adminPanel').classList.remove('hidden');
-                    loadBans();
-                } else {
-                    alert("Incorrect Password!");
-                }
-            } catch (e) {
-                alert("Incorrect Password!");
-            }
+    const password = document.getElementById('modPassword').value;
+    try {
+        const bytes = CryptoJS.AES.decrypt(ENCRYPTED_API_KEY, password);
+        const decryptedText = bytes.toString(CryptoJS.enc.Utf8);
+        
+        // As long as it decrypted *something* that isn't completely blank, try it
+        if (decryptedText && decryptedText.length > 5) {
+            API_KEY = decryptedText.trim(); // .trim() removes any accidental hidden spaces
+            document.getElementById('loginCard').classList.add('hidden');
+            document.getElementById('adminPanel').classList.remove('hidden');
+            loadBans();
+        } else {
+            alert("Incorrect Password!");
         }
+    } catch (e) {
+        alert("Incorrect Password! (Decryption failed)");
+    }
+}
 
         async function loadBans() {
             try {
