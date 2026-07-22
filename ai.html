@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>My AI Assistant</title>
+  <title>Direct IP AI Chat</title>
   <style>
     body {
       font-family: system-ui, -apple-system, sans-serif;
@@ -49,7 +49,7 @@
       background: #475569;
       cursor: not-allowed;
     }
-    .note {
+    .status-text {
       font-size: 0.8rem;
       color: #94a3b8;
       margin-top: 8px;
@@ -58,23 +58,21 @@
 </head>
 <body>
 
-  <h2>Live Local AI Chat</h2>
-  <div id="chat-box">Type a prompt below to talk to the AI...</div>
+  <h2>Host PC AI Chat</h2>
+  <div id="chat-box">Connected to 73.221.119.153:11434. Type a prompt below...</div>
   
   <div class="input-group">
-    <input type="text" id="prompt-input" placeholder="Ask something..." />
+    <input type="text" id="prompt-input" placeholder="Ask my PC something..." />
     <button id="send-btn">Send</button>
   </div>
-  <div class="note">Powered live by my PC</div>
+  <div class="status-text">Direct Connection Mode</div>
 
   <script>
     // ================================================================
-    // PASTE YOUR LOCALTUNNEL URL HERE (No trailing slash)
+    // YOUR PUBLIC IP ENDPOINT
     // ================================================================
-    const TUNNEL_URL = "https://your-localtunnel-url.loca.lt";
-    
-    // Choose which model installed on your PC to use
-    const MODEL_NAME = "llama3.2:1b"; 
+    const OLLAMA_HOST = "http://73.221.119.153:11434";
+    const MODEL_NAME = "llama3.2:1b"; // Change to whichever model you have pulled
     // ================================================================
 
     const chatBox = document.getElementById("chat-box");
@@ -94,12 +92,9 @@
       const botElem = document.getElementById(botId);
 
       try {
-        const response = await fetch(`${TUNNEL_URL}/api/generate`, {
+        const response = await fetch(`${OLLAMA_HOST}/api/generate`, {
           method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "Bypass-Tunnel-Remainder": "true" // Automatically bypasses Localtunnel's landing page
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model: MODEL_NAME,
             prompt: text,
@@ -107,7 +102,9 @@
           })
         });
 
-        if (!response.ok) throw new Error("Could not connect to host PC.");
+        if (!response.ok) {
+          throw new Error(`Server returned HTTP status ${response.status}`);
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
@@ -121,19 +118,19 @@
           const lines = chunk.split("\n");
 
           for (const line of lines) {
-            if (line.trim() !== "") {
+            if (line.trim()) {
               try {
                 const parsed = JSON.parse(line);
                 botElem.innerText += parsed.response;
                 chatBox.scrollTop = chatBox.scrollHeight;
               } catch (e) {
-                // Ignore incomplete JSON chunks
+                // Ignore incomplete JSON stream lines
               }
             }
           }
         }
       } catch (err) {
-        botElem.innerText = `Error: ${err.message}. Make sure the host PC terminal is running!`;
+        botElem.innerText = `Error: ${err.message}. If using GitHub Pages, make sure "Insecure Content" is allowed in your browser site settings for this page.`;
       }
 
       sendBtn.disabled = false;
