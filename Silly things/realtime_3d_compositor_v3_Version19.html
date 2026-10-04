@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Realtime 3D Compositor</title>
+<style>
+  html,body{
+    margin:0;width:100%;height:100%;overflow:hidden;background:#000;
+    font-family:system-ui,sans-serif;touch-action:none;
+  }
+  #camera,#bgImg{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#111}
+  #bgImg{display:none}
+  #gl,#occ{position:fixed;inset:0;width:100%;height:100%}
+  #gl{pointer-events:none}
+  #maskPaint{position:fixed;inset:0;width:100%;height:100%;display:none;pointer-events:none}
+  #ui{position:fixed;left:12px;right:12px;top:12px;z-index:10;color:#fff;background:#000b;
+      padding:12px;border-radius:14px;backdrop-filter:blur(8px);max-height:80vh;overflow:auto;touch-action:pan-y}
+  #ui.min .body{display:none}
+  #head{display:flex;justify-content:space-between;align-items:center}
+  button,input{font-size:16px}
+  button{padding:10px 12px;border:0;border-radius:10px;margin:3px;background:#fff;color:#111}
+  button.on{background:#7dff9b}
+  label{display:block;margin:8px 0;font-size:14px}
+  input[type=range]{width:100%}
+  .row{display:flex;gap:10px}
+  .row>*{flex:1}
+  #status{font-size:13px;line-height:1.35;color:#ddd;margin:6px 0}
+  #segStatus{font-size:12px;color:#aaa;margin:2px 0 6px}
+  .ok{color:#7dff9b}.bad{color:#ff8d8d}
+  .hint{font-size:12px;color:#aaa;margin:6px 0}
+  .filebtn{display:inline-block;padding:10px 12px;border-radius:10px;margin:3px;background:#fff;color:#111;font-size:16px}
+  .filebtn input{display:none}
+  .inline-input{display:inline-block;width:90px;vertical-align:middle;margin-left:8px;}
+</style>
+</head>
+<body>
+
+<video id="camera" autoplay muted playsinline></video>
+<img id="bgImg" alt="">
+<canvas id="gl"></canvas>
+<canvas id="occ"></canvas>
+<canvas id="maskPaint"></canvas>
+
+<div id="ui">
+  <div id="head"><b>Realtime 3D Compositor</b><button id="toggle">Hide</button></div>
+  <div class="body">
+    <div id="status">Starting…</div>
+    <div id="segStatus">Auto-mask: loading…</div>
+
+    <label class="filebtn">Load 3D model (.glb)
+      <input id="modelFile" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json">
+    </label>
+
+    <div>
+      <button id="resetTransform">Reset transform</button>
+      <button id="resetScale">Reset scale</button>
+      <button id="zUp">Assume Z-up</button>
+      <button id="normalizeScale">Normalize scale</button>
+      <button id="alignToCamera">Align to camera</button>
+      <button id="toggleBBox">Show bbox</button>
+      <label style="display:inline-block;margin-left:6px;">Target height (m)
+        <input id="targetHeight" class="inline-input" type="number" step="0.01" min="0.01" value="1.8">
+      </label>
+      <button id="autoScale">Auto-scale</button>
+      <label style="display:inline-block;margin-left:10px;">
+        <input id="fullscreenModel" type="checkbox"> Fullscreen mesh
+      </label>
+    </div>
+
+    <div class="row">
+      <label>Distance <span id="distanceValue">3.0 m</span>
+        <input id="distance" type="range" min="0.2" max="20" step="0.1" value="3"></label>
+      <label>Scale <input id="scale" type="range" min="0.05" max="10" step="0.01" value="1"></label>
+    </div>
+    <div class="row">
+      <label>Height <input id="height" type="range" min="-2" max="2" step="0.01" value="0"></label>
+      <label>Rotation <input id="rotation" type="range" min="-180" max="180" step="1" value="0"></label>
+    </div>
+    <label>Light <input id="light" type="range" min="0" max="3" step="0.01" value="1"></label>
+    <div class="row">
+      <label>Occlusion threshold <span id="thresholdValue">0.35</span>
+        <input id="threshold" type="range" min="0" max="1" step="0.01" value="0.35"></label>
+      <label>Mask feather <span id="featherValue">0.30</span>
+        <input id="feather" type="range" min="0.02" max="0.8" step="0.01" value="0.30"></label>
+    </div>
+    <div class="row">
+      <label>Brush size <span id="brushValue">80</span> px
+        <input id="brush" type="range" min="5" max="300" step="1" value="80"></label>
+      <label>Mask opacity
+        <input id="maskOpacity" type="range" min="0" max="1" step="0.01" value="1"></label>
+    </div>
+    <button id="paint">Paint foreground</button>
+    <button id="erase">Erase foreground</button>
+    <button id="clearMask">Clear manual mask</button>
+    <button id="showMask">Show mask</button>
+    <button id="showDepth">Show depth</button>
+
+    <button id="retry">Try live camera</button>
+    <label class="filebtn">Take photo / video
+      <input id="capture" type="file" accept="image/*,video/*" capture="environment">
+    </label>
+    <label class="filebtn">Pick background
+      <input id="pick" type="file" accept="image/*,video/*">
+    </label>
+
+    <button id="front">Model in front</button>
+    <button id="behind" class="on">Model behind people (auto)</button>
+    <button id="flip">Flip mask</button>
+
+    <div class="hint">
+      Touch: 1 finger = move. 2 fingers = pinch distance/scale + twist rotation.
+      Use Auto-scale / Fullscreen mesh for presentation.
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<script type="module">
+  const segStatus = document.getElementById('segStatus');
+  try {
+    const V = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+    const { ImageSegmenter, FilesetResolver } = await import(V + '/vision_bundle.mjs');
+    const fileset = await FilesetResolver.forVisionTasks(V + '/wasm');
+    const modelPath = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+    let seg;
+    try {
+      seg = await ImageSegmenter.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
+        runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false
+      });
+    } catch (e) {
+      seg = await ImageSegmenter.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: modelPath, delegate: 'CPU' },
+        runningMode: 'VIDEO', outputConfidenceMasks: true, outputCategoryMask: false
+      });
+    }
+    window.segmenter = seg;
+    segStatus.textContent = 'Auto-mask: ready';
+    segStatus.className = 'ok';
+  } catch (err) {
+    console.error(err);
+    segStatus.textContent = 'Auto-mask failed to load (' + (err.message || err) + '). Needs internet access.';
+    segStatus.className = 'bad';
+  }
+</script>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const statusEl = $('status');
+  function setStatus(t, good, bad){ statusEl.textContent = t; statusEl.className = good ? 'ok' : bad ? 'bad' : ''; }
+
+  window.addEventListener('error', (ev) => {
+    console.error('Global error', ev);
+    try { setStatus('Error: ' + (ev && ev.message ? ev.message : String(ev)), false, true); } catch (e) {}
+  });
+  window.addEventListener('unhandledrejection', (ev) => {
+    console.error('Unhandled rejection', ev);
+    try { setStatus('Promise error: ' + (ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason)), false, true); } catch (e) {}
+  });
+
+  setStatus('Starting…');
+
+  try {
+    const video = $('camera'), bgImg = $('bgImg'), glCanvas = $('gl'), occ = $('occ'), occCtx = occ.getContext('2d');
+
+    // Hide/show UI toggle
+    $('toggle').addEventListener('click', () => {
+      const uiEl = $('ui');
+      uiEl.classList.toggle('min');
+      $('toggle').textContent = uiEl.classList.contains('min') ? 'Show' : 'Hide';
+    });
+
+    /* ---------- Depth overlay ---------- */
+    const depthOverlay = document.createElement('canvas');
+    depthOverlay.style.position = 'fixed'; depthOverlay.style.inset = '0';
+    depthOverlay.style.width = '100%'; depthOverlay.style.height = '100%';
+    depthOverlay.style.zIndex = '6'; depthOverlay.style.pointerEvents = 'none';
+    depthOverlay.style.display = 'none';
+    document.body.appendChild(depthOverlay);
+    const depthOverlayCtx = depthOverlay.getContext('2d');
+    let showDepth = false;
+    $('showDepth').onclick = () => {
+      showDepth = !showDepth;
+      $('showDepth').classList.toggle('on', showDepth);
+      depthOverlay.style.display = showDepth ? 'block' : 'none';
+    };
+
+    /* ---------- Background / camera ---------- */
+    let stream = null, bgKind = 'video', imageNeedsSeg = false, imageDepthReady = false;
+    function showVideo(){ bgKind = 'video'; video.style.display = 'block'; bgImg.style.display = 'none'; }
+    function showImage(){ bgKind = 'image'; video.style.display = 'none'; bgImg.style.display = 'block'; }
+    function stopStream(){ if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; } }
+
+    async function requestCamera(){
+      setStatus('Requesting camera…');
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Live camera isn't available when opened from a local file.");
+        }
+        stopStream();
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        video.loop = false;
+        await video.play();
+        showVideo();
+        setStatus('Live camera active.', true);
+      } catch (err) {
+        console.warn(err);
+        setStatus('Live camera unavailable (' + (err.message || err) + '). Use “Take photo / video” instead.', false, true);
+      }
+    }
+    $('retry').onclick = requestCamera;
+
+    function loadBackground(file){
+      if (!file) return;
+      stopStream();
+      imageDepthReady = false;
+      const url = URL.createObjectURL(file);
+      clearSegMask();
+      if (file.type.startsWith('video/')) {
+        video.srcObject = null;
+        video.src = url;
+        video.loop = true;
+        video.play().catch(()=>{});
+        showVideo();
+      } else {
+        bgImg.onload = () => {
+          imageNeedsSeg = true;
+          estimateDepthForImage(bgImg).catch(e => console.warn('image depth estimate failed', e));
+        };
+        bgImg.src = url;
+        showImage();
+      }
+      setStatus('Background loaded.', true);
+    }
+    $('capture').onchange = e => loadBackground(e.target.files[0]);
+    $('pick').onchange = e => loadBackground(e.target.files[0]);
+
+    /* ---------- Three.js ---------- */
+    const renderer = new THREE.WebGLRenderer({ canvas: glCanvas, alpha: true, antialias: true });
+    renderer.setClearColor(0x000000, 0);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    const scene = new THREE.Scene();
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.05, 200);
+    scene.add(cam);
+    const ambient = new THREE.HemisphereLight(0xffffff, 0x444455, 1);
+    const sun = new THREE.DirectionalLight(0xffffff, 1);
+    sun.position.set(2,4,3);
+    scene.add(ambient, sun);
+
+    const pivot = new THREE.Group();
+    scene.add(pivot);
+
+    let placeholder = new THREE.Mesh(
+      new THREE.BoxGeometry(1,1,1),
+      new THREE.MeshStandardMaterial({ color:0x4aa3ff, roughness:.4 })
+    );
+    pivot.add(placeholder);
+    let current = placeholder;
+    let offsetX = 0, offsetY = 0;
+
+    function fitModel(obj){
+      const box = new THREE.Box3().setFromObject(obj);
+      const center = box.getCenter(new THREE.Vector3());
+      obj.position.sub(center);
+    }
+
+    /* ---------- Model transform helpers ---------- */
+    let debugBBoxHelper = null;
+
+    function resetModelTransform(){
+      if (!current || current === placeholder) { setStatus('No model to reset', false, true); return; }
+      current.rotation.set(0,0,0); current.position.set(0,0,0); current.scale.set(1,1,1);
+      current.traverse(o => { if (o.isMesh){ o.position.set(0,0,0); o.rotation.set(0,0,0); }});
+      setStatus('Model transform reset', true);
+    }
+    function resetModelScale(){
+      if (!current || current === placeholder) { setStatus('No model', false, true); return; }
+      current.scale.set(1,1,1);
+      setStatus('Model scale reset to 1', true);
+    }
+    function normalizeModelScale(){
+      if (!current || current === placeholder) { setStatus('No model', false, true); return; }
+      const s = current.scale;
+      const ax = Math.abs(s.x) || 1;
+      const ay = Math.abs(s.y) || 1;
+      const az = Math.abs(s.z) || 1;
+      const avg = (ax + ay + az) / 3;
+      const sx = s.x < 0 ? -avg : avg;
+      const sy = s.y < 0 ? -avg : avg;
+      const sz = s.z < 0 ? -avg : avg;
+      current.scale.set(sx, sy, sz);
+      setStatus('Normalized model scale', true);
+    }
+    function assumeZUp(){
+      if (!current || current === placeholder) { setStatus('No model', false, true); return; }
+      current.rotateX(-Math.PI / 2);
+      setStatus('Applied Z-up→Y-up', true);
+    }
+    function alignModelToCamera(){
+      if (!current || current === placeholder) { setStatus('No model', false, true); return; }
+      const camPos = new THREE.Vector3();
+      cam.getWorldPosition(camPos);
+      const modelPos = new THREE.Vector3();
+      current.getWorldPosition(modelPos);
+      const dir = new THREE.Vector3().subVectors(camPos, modelPos).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,-1), dir);
+      current.quaternion.copy(q);
+
+      const box = new THREE.Box3().setFromObject(current);
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      const forwardWorld = new THREE.Vector3(0,0,-1).applyQuaternion(current.getWorldQuaternion(new THREE.Quaternion())).normalize();
+      const toCamera = new THREE.Vector3().subVectors(camPos, center).normalize();
+      if (forwardWorld.dot(toCamera) < 0) current.rotateY(Math.PI);
+
+      setStatus('Aligned model to camera', true);
+    }
+    function toggleModelBBox(){
+      if (!current || current === placeholder) { setStatus('No model', false, true); return; }
+      if (debugBBoxHelper){
+        scene.remove(debugBBoxHelper);
+        debugBBoxHelper.geometry.dispose();
+        debugBBoxHelper.material.dispose();
+        debugBBoxHelper = null;
+        setStatus('BBox hidden', true);
+        return;
+      }
+      const box = new THREE.Box3().setFromObject(current);
+      if (!box.isEmpty()){
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+        const material = new THREE.MeshBasicMaterial({ color:0x00ff00, wireframe:true });
+        debugBBoxHelper = new THREE.Mesh(geometry, material);
+        debugBBoxHelper.position.copy(center);
+        scene.add(debugBBoxHelper);
+        setStatus('BBox shown', true);
+      } else {
+        setStatus('Model bbox empty', false, true);
+      }
+    }
+    function autoScaleModelToHeight(targetMeters){
+      if (!current || current === placeholder) { setStatus('No model', false, true); return; }
+      const box = new THREE.Box3().setFromObject(current);
+      if (!box.isEmpty()){
+        const size = box.getSize(new THREE.Vector3());
+        const currentHeight = size.y || Math.max(size.x, size.z) || 1;
+        const factor = targetMeters / currentHeight;
+        current.scale.multiplyScalar(factor);
+        setStatus('Scaled ×' + factor.toFixed(3), true);
+      } else {
+        setStatus('Could not compute model size', false, true);
+      }
+    }
+
+    $('resetTransform').onclick = resetModelTransform;
+    $('resetScale').onclick = resetModelScale;
+    $('zUp').onclick = assumeZUp;
+    $('normalizeScale').onclick = normalizeModelScale;
+    $('alignToCamera').onclick = alignModelToCamera;
+    $('toggleBBox').onclick = toggleModelBBox;
+    $('autoScale').onclick = () => {
+      const v = parseFloat($('targetHeight').value);
+      if (!isFinite(v) || v <= 0) { setStatus('Enter valid height', false, true); return; }
+      autoScaleModelToHeight(v);
+    };
+
+    // Fullscreen mesh toggle
+    let fullscreenModel = false;
+    $('fullscreenModel').addEventListener('change', (e) => {
+      fullscreenModel = e.target.checked;
+      if (depthMesh) depthMesh.visible = true;
+
+      const baseDistance = Number(ui.distance.value || 3.0);
+
+      if (fullscreenModel) {
+        if (bgKind === 'video') video.style.display = 'none'; else bgImg.style.display = 'none';
+        for (let i = 0; i < sceneDepthBuf.length; i++) sceneDepthBuf[i] = baseDistance;
+        if (depthMesh) updateDepthMeshFromSceneDepth();
+        setStatus('Showing generated mesh fullscreen', true);
+      } else {
+        if (bgKind === 'video') video.style.display = 'block'; else bgImg.style.display = 'block';
+        setStatus('Restored background', true);
+      }
+    });
+
+    /* ---------- Model load ---------- */
+    $('modelFile').onchange = async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      setStatus('Loading model…');
+      try {
+        const buf = await file.arrayBuffer();
+        new THREE.GLTFLoader().parse(buf, '', gltf => {
+          pivot.remove(current);
+          const wrapper = new THREE.Group();
+          wrapper.add(gltf.scene);
+          fitModel(gltf.scene);
+          wrapper.rotation.set(0,0,0);
+          wrapper.position.set(0,0,0);
+          wrapper.scale.set(1,1,1);
+          current = wrapper;
+          pivot.add(wrapper);
+          setStatus('Model loaded: ' + file.name, true);
+        }, err => {
+          console.error(err);
+          setStatus('Model read error', false, true);
+        });
+      } catch (err) {
+        setStatus('Model load failed: ' + err.message, false, true);
+      }
+    };
+
+    const ui = { distance: $('distance'), scale: $('scale'), height: $('height'), rotation: $('rotation'), light: $('light') };
+    ui.distance.oninput = () => $('distanceValue').textContent = Number(ui.distance.value).toFixed(1) + ' m';
+
+    function resize(){
+      const w = innerWidth, h = innerHeight, dpr = Math.min(devicePixelRatio || 1, 2);
+      renderer.setPixelRatio(dpr);
+      renderer.setSize(w, h, false);
+      cam.aspect = w / h; cam.updateProjectionMatrix();
+      occ.width = w * dpr; occ.height = h * dpr;
+      depthOverlay.width = occ.width; depthOverlay.height = occ.height;
+      depthOverlayCtx.setTransform(dpr,0,0,dpr,0,0);
+      resizeMask();
+      resizeDepthBuffers();
+    }
+    addEventListener('resize', resize);
+
+    /* ---------- Mask painting & controls ---------- */
+    let autoOcclude = true, flipMask = false, manualMaskEnabled = false, maskTool = 'paint', showMask = false;
+    function setMode(behind){ autoOcclude = behind; $('front').classList.toggle('on', !behind); $('behind').classList.toggle('on', behind); }
+    $('front').onclick = () => setMode(false);
+    $('behind').onclick = () => setMode(true);
+    $('flip').onclick = () => { flipMask = !flipMask; $('flip').classList.toggle('on', flipMask); clearSegMask(); };
+
+    const maskPaint = $('maskPaint'); const maskCtx = maskPaint.getContext('2d', {willReadFrequently:false});
+    function resizeMask(){ const dpr = Math.min(devicePixelRatio||1,2); maskPaint.width = innerWidth*dpr; maskPaint.height = innerHeight*dpr; maskCtx.setTransform(dpr,0,0,dpr,0,0); }
+    function clearManualMask(){ maskCtx.clearRect(0,0,innerWidth,innerHeight); }
+    $('clearMask').onclick = () => { clearManualMask(); showMask = false; $('showMask').classList.remove('on'); imageDepthReady = false; };
+    $('paint').onclick = () => { manualMaskEnabled = true; maskTool = 'paint'; $('paint').classList.add('on'); $('erase').classList.remove('on'); };
+    $('erase').onclick = () => { manualMaskEnabled = true; maskTool = 'erase'; $('erase').classList.add('on'); $('paint').classList.remove('on'); };
+    $('showMask').onclick = () => { showMask = !showMask; $('showMask').classList.toggle('on', showMask); };
+
+    const threshold = $('threshold'), feather = $('feather');
+    threshold.oninput = () => { $('thresholdValue').textContent = Number(threshold.value).toFixed(2); clearSegMask(); };
+    feather.oninput = () => { $('featherValue').textContent = Number(feather.value).toFixed(2); clearSegMask(); };
+    $('brush').oninput = e => $('brushValue').textContent = e.target.value;
+
+    function paintAt(x,y){
+      if (!manualMaskEnabled) return;
+      const r = +$('brush').value;
+      maskCtx.save();
+      maskCtx.globalCompositeOperation = maskTool === 'erase' ? 'destination-out' : 'source-over';
+      maskCtx.globalAlpha = maskTool === 'paint' ? +$('maskOpacity').value : 1;
+      maskCtx.fillStyle = '#fff';
+      maskCtx.beginPath(); maskCtx.arc(x, y, r, 0, Math.PI * 2); maskCtx.fill();
+      maskCtx.restore();
+    }
+
+    /* ---------- Pointer handling ---------- */
+    let pointers = new Map(); let gesture = null;
+    function pointDist(a,b){ return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+    function pointAngle(a,b){ return Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX); }
+
+    occ.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      occ.setPointerCapture(e.pointerId); pointers.set(e.pointerId, e);
+      if (manualMaskEnabled){ paintAt(e.clientX, e.clientY); return; }
+      if (pointers.size === 1){
+        gesture = { type:'move', x:e.clientX, y:e.clientY, ox:offsetX, oy:offsetY };
+      } else if (pointers.size === 2){
+        const a = [...pointers.values()][0], b = [...pointers.values()][1];
+        gesture = { type:'two', dist:pointDist(a,b), angle:pointAngle(a,b), scale:+ui.scale.value, distance:+ui.distance.value, rotation:+ui.rotation.value };
+      }
+    });
+
+    occ.addEventListener('pointermove', e => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, e);
+      if (manualMaskEnabled){ paintAt(e.clientX, e.clientY); return; }
+      if (pointers.size === 1 && gesture && gesture.type === 'move'){
+        const d = gesture;
+        offsetX = d.ox + (e.clientX - d.x) / innerWidth * 2;
+        offsetY = d.oy - (e.clientY - d.y) / innerHeight * 2;
+      } else if (pointers.size === 2){
+        const a=[...pointers.values()][0], b=[...pointers.values()][1];
+        if (!gesture || gesture.type !== 'two') {
+          gesture = { type:'two', dist:pointDist(a,b), angle:pointAngle(a,b), scale:+ui.scale.value, distance:+ui.distance.value, rotation:+ui.rotation.value };
+        }
+        const nd = pointDist(a,b), na = pointAngle(a,b);
+        const ratio = nd / Math.max(gesture.dist, 1);
+        ui.scale.value = Math.max(.05, Math.min(10, gesture.scale * ratio));
+        ui.distance.value = Math.max(.2, Math.min(20, gesture.distance / ratio));
+        $('distanceValue').textContent = Number(ui.distance.value).toFixed(1) + ' m';
+        let da = (na - gesture.angle) * 180 / Math.PI;
+        if (da > 180) da -= 360; if (da < -180) da += 360;
+        ui.rotation.value = Math.max(-180, Math.min(180, gesture.rotation + da));
+      }
+    });
+    function endPointer(e){ pointers.delete(e.pointerId); if (pointers.size === 0) gesture = null; }
+    occ.addEventListener('pointerup', endPointer);
+    occ.addEventListener('pointercancel', endPointer);
+    occ.addEventListener('pointerleave', ()=>{});
+
+    occ.addEventListener('wheel', e => {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        ui.rotation.value = Math.max(-180, Math.min(180, +ui.rotation.value - e.deltaY * .25));
+      } else if (e.shiftKey) {
+        ui.scale.value = Math.max(.05, Math.min(10, +ui.scale.value - e.deltaY * .002));
+      } else {
+        ui.distance.value = Math.max(.2, Math.min(20, +ui.distance.value + e.deltaY * .01));
+        $('distanceValue').textContent = Number(ui.distance.value).toFixed(1) + ' m';
+      }
+    }, { passive:false });
+
+    /* ---------- Segmentation ---------- */
+    const segCanvas = document.createElement('canvas'), segCtx = segCanvas.getContext('2d');
+    const compositeMask = document.createElement('canvas'), compositeMaskCtx = compositeMask.getContext('2d');
+    let segImage = null, prevAlpha = null, haveMask = false, lastSegTime = 0, lastVideoTime = -1;
+
+    function clearSegMask(){ haveMask = false; prevAlpha = null; imageDepthReady = false; }
+    function runSegmentation(src, now){
+      const seg = window.segmenter; if (!seg) return;
+      try {
+        seg.segmentForVideo(src, now, result => {
+          const masks = result.confidenceMasks; if (!masks || !masks.length) return;
+          const m = masks[masks.length > 1 ? 1 : 0];
+          const w = m.width, h = m.height; const data = m.getAsFloat32Array();
+          if (segCanvas.width !== w || segCanvas.height !== h){
+            segCanvas.width = w; segCanvas.height = h;
+            segImage = segCtx.createImageData(w, h);
+            prevAlpha = new Float32Array(w * h);
+          }
+          if (!segImage) return;
+          const px = segImage.data;
+          for (let i = 0; i < data.length; i++) {
+            let c = flipMask ? 1 - data[i] : data[i];
+            const t = +threshold.value, f = +feather.value;
+            let a = (c - t) / Math.max(f, 0.001);
+            a = a < 0 ? 0 : a > 1 ? 1 : a;
+            a = prevAlpha[i] * 0.35 + a * 0.65;
+            prevAlpha[i] = a;
+            const o = i * 4;
+            px[o] = px[o+1] = px[o+2] = 255;
+            px[o+3] = a * 255;
+          }
+          segCtx.putImageData(segImage, 0, 0);
+          haveMask = true;
+        });
+      } catch (err) { console.warn('segment error', err); }
+    }
+    function manualOccludeMaskExists(){ return manualMaskEnabled && maskPaint.width > 0; }
+
+    /* ---------- Depth estimation + mesh ---------- */
+    let depthW = 120, depthH = 68;
+    let sceneDepthBuf = new Float32Array(depthW * depthH);
+    let modelDepthBuf = new Float32Array(depthW * depthH);
+    let depthMesh = null, bgTexture = null, maskTexture = null, bgIsVideo = false;
+
+    function resizeDepthBuffers(){
+      const maxW = 240, maxH = 160;
+      const ratio = innerWidth / innerHeight;
+      depthW = Math.min(maxW, Math.max(64, Math.round(120 * Math.min(1, innerWidth/1280))));
+      depthH = Math.min(maxH, Math.max(36, Math.round(depthW / ratio)));
+      if (isNaN(depthW) || isNaN(depthH) || depthW < 8 || depthH < 8) { depthW = 120; depthH = 68; }
+      sceneDepthBuf = new Float32Array(depthW * depthH);
+      modelDepthBuf = new Float32Array(depthW * depthH);
+    }
+
+    function estimateDepthFallback(srcEl){
+      const tmp = document.createElement('canvas');
+      tmp.width = depthW; tmp.height = depthH;
+      const ctx = tmp.getContext('2d');
+      ctx.drawImage(srcEl, 0, 0, tmp.width, tmp.height);
+      const imgData = ctx.getImageData(0,0,tmp.width,tmp.height).data;
+      const depthArr = new Float32Array(tmp.width * tmp.height);
+
+      for (let y = 0; y < tmp.height; y++){
+        for (let x = 0; x < tmp.width; x++){
+          const i = y * tmp.width + x;
+          const p = i * 4;
+          const r = imgData[p], g = imgData[p+1], b = imgData[p+2];
+          const luminance = (0.299*r + 0.587*g + 0.114*b) / 255;
+          const verticalBias = 1 - (y / tmp.height);
+          const bgDepth = 2.5 + 3.5 * verticalBias;
+
+          let personAlpha = 0;
+          if (haveMask && segCanvas.width && segCanvas.height) {
+            const sx = Math.floor(x / tmp.width * segCanvas.width);
+            const sy = Math.floor(y / tmp.height * segCanvas.height);
+            if (sx >=0 && sx < segCanvas.width && sy >=0 && sy < segCanvas.height) {
+              const pd = segCtx.getImageData(sx, sy, 1, 1).data;
+              personAlpha = pd[3] / 255;
+            }
+          }
+
+          const faceLike = (luminance > 0.55) ? 0.35 : 0.0;
+          const combined = Math.min(1, personAlpha + faceLike + (1 - verticalBias) * 0.25);
+          const nearDepth = 0.6;
+          const farDepth = 8.0;
+          const estimated = nearDepth + (farDepth - nearDepth) * (1 - combined * 0.9 + (verticalBias * 0.25));
+          const final = estimated * 0.55 + bgDepth * 0.45;
+          depthArr[i] = final;
+        }
+      }
+      return depthArr;
+    }
+
+    async function estimateDepthForImage(srcEl){
+      try {
+        setStatus('Estimating depth for image…');
+        resizeDepthBuffers();
+        const est = estimateDepthFallback(srcEl);
+        sceneDepthBuf = new Float32Array(est);
+        imageDepthReady = true;
+        setStatus('Image depth estimated.', true);
+      } catch (err) {
+        console.warn('estimateDepthForImage failed', err);
+        imageDepthReady = false;
+        setStatus('Image depth estimation failed', false, true);
+      }
+    }
+
+    const raycaster = new THREE.Raycaster();
+
+    async function sampleModelDepthGrid(gridW, gridH){
+      const out = new Float32Array(gridW * gridH);
+      const camPos = new THREE.Vector3();
+      cam.getWorldPosition(camPos);
+      const camDir = new THREE.Vector3();
+      cam.getWorldDirection(camDir).normalize();
+      for (let j = 0; j < gridH; j++){
+        for (let i = 0; i < gridW; i++){
+          const ndcX = (i + 0.5) / gridW * 2 - 1;
+          const ndcY = -((j + 0.5) / gridH * 2 - 1);
+          raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), cam);
+          const intersects = raycaster.intersectObject(pivot, true);
+          if (intersects.length) {
+            const p = intersects[0].point;
+            const vec = new THREE.Vector3().subVectors(p, camPos);
+            const depthAlong = vec.dot(camDir);
+            out[j * gridW + i] = depthAlong > 0 ? depthAlong : Infinity;
+          } else {
+            out[j * gridW + i] = Infinity;
+          }
+        }
+        if ((j & 15) === 0) await new Promise(r => setTimeout(r, 0));
+      }
+      return out;
+    }
+
+    function ensureDepthMesh(){
+      if (depthMesh && depthMesh.geometry && depthMesh.userData.gridW === depthW && depthMesh.userData.gridH === depthH) return;
+      if (depthMesh){
+        if (depthMesh.geometry) depthMesh.geometry.dispose();
+        if (depthMesh.material) depthMesh.material.dispose();
+        try { cam.remove(depthMesh); } catch (e) {}
+        depthMesh = null;
+      }
+
+      const gridW = depthW, gridH = depthH;
+      const vertexCount = gridW * gridH;
+      const positions = new Float32Array(vertexCount * 3);
+      const uvs = new Float32Array(vertexCount * 2);
+      const indices = [];
+      for (let y=0; y<gridH-1; y++){
+        for (let x=0; x<gridW-1; x++){
+          const i0 = y * gridW + x, i1 = i0 + 1, i2 = i0 + gridW, i3 = i2 + 1;
+          indices.push(i0, i2, i1);
+          indices.push(i1, i2, i3);
+        }
+      }
+      for (let j=0; j<gridH; j++){
+        for (let i=0; i<gridW; i++){
+          const idx = j * gridW + i;
+          uvs[idx * 2 + 0] = i / (gridW - 1);
+          uvs[idx * 2 + 1] = 1 - (j / (gridH - 1));
+          positions[idx * 3 + 0] = 0; positions[idx * 3 + 1] = 0; positions[idx * 3 + 2] = 0;
+        }
+      }
+
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      geom.setIndex(indices);
+      geom.computeBoundingSphere();
+
+      const mat = new THREE.MeshBasicMaterial({
+        map: bgTexture || null,
+        alphaMap: maskTexture || null,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+        depthTest: true
+      });
+      mat.alphaTest = 0.01;
+
+      depthMesh = new THREE.Mesh(geom, mat);
+      depthMesh.frustumCulled = false;
+      depthMesh.userData.gridW = gridW; depthMesh.userData.gridH = gridH;
+      cam.add(depthMesh);
+      depthMesh.position.set(0,0,0);
+      depthMesh.rotation.set(0,0,0);
+    }
+
+    function updateDepthMeshFromSceneDepth(){
+      if (!depthMesh) return;
+      const gridW = depthW, gridH = depthH;
+      const geom = depthMesh.geometry;
+      const pos = geom.attributes.position.array;
+      let sum = 0, count = 0;
+      for (let i = 0; i < sceneDepthBuf.length; i++){
+        const v = sceneDepthBuf[i];
+        if (Number.isFinite(v) && v > 0 && v < 1000) { sum += v; count++; }
+      }
+      let baseDistance = +ui.distance.value;
+      if (count > 0) baseDistance = Math.max(0.1, sum / count);
+
+      const halfH = Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * baseDistance;
+      const planeHeight = 2 * halfH;
+      const planeWidth = planeHeight * cam.aspect;
+
+      for (let j=0; j<gridH; j++){
+        for (let i=0; i<gridW; i++){
+          const idx = j * gridW + i;
+          const x = (i / (gridW - 1) - 0.5) * planeWidth;
+          const y = (0.5 - j / (gridH - 1)) * planeHeight;
+          let depth = sceneDepthBuf[idx];
+          if (!Number.isFinite(depth) || depth <= 0 || depth > 1000) depth = baseDistance;
+          const off = idx * 3;
+          pos[off + 0] = x;
+          pos[off + 1] = y;
+          pos[off + 2] = -depth;
+        }
+      }
+      geom.attributes.position.needsUpdate = true;
+      geom.computeBoundingSphere();
+    }
+
+    function ensureTextures(){
+      if (bgIsVideo && (!bgTexture || !(bgTexture instanceof THREE.VideoTexture))) {
+        if (bgTexture) bgTexture.dispose();
+        bgTexture = new THREE.VideoTexture(video);
+        bgTexture.minFilter = THREE.LinearFilter; bgTexture.magFilter = THREE.LinearFilter; bgTexture.format = THREE.RGBAFormat;
+        if (depthMesh){ depthMesh.material.map = bgTexture; depthMesh.material.needsUpdate = true; }
+      }
+      if (!bgIsVideo && (!bgTexture || bgTexture instanceof THREE.VideoTexture)) {
+        if (bgTexture) bgTexture.dispose();
+        bgTexture = new THREE.Texture(bgImg);
+        bgTexture.minFilter = THREE.LinearFilter; bgTexture.magFilter = THREE.LinearFilter; bgTexture.format = THREE.RGBAFormat; bgTexture.needsUpdate = true;
+        if (depthMesh){ depthMesh.material.map = bgTexture; depthMesh.material.needsUpdate = true; }
+      }
+      if (!maskTexture) {
+        maskTexture = new THREE.CanvasTexture(compositeMask);
+        maskTexture.minFilter = THREE.LinearFilter; maskTexture.magFilter = THREE.LinearFilter;
+        if (depthMesh){ depthMesh.material.alphaMap = maskTexture; depthMesh.material.needsUpdate = true; }
+      }
+    }
+
+    function upsampleDepthGrid(lowGrid, lowW, lowH, W, H){
+      const out = new Float32Array(W * H);
+      if (!lowGrid || lowGrid.length === 0){ for (let i=0; i<W*H; i++) out[i]=Infinity; return out; }
+      for (let y=0; y<H; y++){
+        const fy = y / H * (lowH - 1); const y0 = Math.floor(fy), y1 = Math.min(lowH - 1, y0 + 1); const wy = fy - y0;
+        for (let x=0; x<W; x++){
+          const fx = x / W * (lowW - 1); const x0 = Math.floor(fx), x1 = Math.min(lowW - 1, x0 + 1); const wx = fx - x0;
+          const v00 = lowGrid[y0 * lowW + x0], v10 = lowGrid[y0 * lowW + x1], v01 = lowGrid[y1 * lowW + x0], v11 = lowGrid[y1 * lowW + x1];
+          const interp = (a,b,t) => {
+            if (!Number.isFinite(a) && !Number.isFinite(b)) return Infinity;
+            if (!Number.isFinite(a)) return b;
+            if (!Number.isFinite(b)) return a;
+            return a*(1-t)+b*t;
+          };
+          const v0 = interp(v00, v10, wx);
+          const v1 = interp(v01, v11, wx);
+          const v = interp(v0, v1, wy);
+          out[y * W + x] = v;
+        }
+      }
+      return out;
+    }
+
+    let lastModelSample = 0, lastSceneDepthEstimate = 0;
+    const modelSampleInterval = 140, sceneDepthInterval = 140;
+
+    function frame(now){
+      const d = +ui.distance.value;
+      const halfH = Math.tan(THREE.MathUtils.degToRad(cam.fov / 2)) * d;
+      const halfW = halfH * cam.aspect;
+      pivot.position.set(offsetX * halfW, offsetY * halfH + (+ui.height.value), -d);
+      pivot.scale.setScalar(+ui.scale.value);
+      pivot.rotation.y = THREE.MathUtils.degToRad(+ui.rotation.value);
+
+      const l = +ui.light.value;
+      sun.intensity = l * 1.2; ambient.intensity = l * 0.8;
+
+      if (autoOcclude && window.segmenter){
+        if (bgKind === 'video'){
+          if (video.readyState >= 2 && video.currentTime !== lastVideoTime && now - lastSegTime > 30){
+            lastVideoTime = video.currentTime; lastSegTime = now; runSegmentation(video, performance.now());
+          }
+        } else if (imageNeedsSeg && bgImg.complete && bgImg.naturalWidth){
+          imageNeedsSeg = false;
+          for (let i = 0; i < 4; i++) runSegmentation(bgImg, performance.now() + i);
+        }
+      }
+
+      if (bgKind === 'video'){
+        if (now - lastSceneDepthEstimate > sceneDepthInterval){
+          lastSceneDepthEstimate = now;
+          const est = estimateDepthFallback(video);
+          if (est.length === sceneDepthBuf.length) sceneDepthBuf.set(est); else sceneDepthBuf = new Float32Array(est);
+          imageDepthReady = false;
+        }
+      } else if (bgKind === 'image'){
+        if (!imageDepthReady && bgImg.complete && bgImg.naturalWidth) {
+          estimateDepthForImage(bgImg).catch(e => console.warn(e));
+        }
+      }
+
+      if (now - lastModelSample > modelSampleInterval){
+        lastModelSample = now;
+        sampleModelDepthGrid(depthW, depthH).then(grid => {
+          modelDepthBuf = grid;
+        }).catch(e => console.warn('model sample failed', e));
+      }
+
+      if (compositeMask.width !== occ.width || compositeMask.height !== occ.height){
+        compositeMask.width = occ.width; compositeMask.height = occ.height;
+      }
+      const mc = compositeMaskCtx;
+      mc.clearRect(0,0,compositeMask.width, compositeMask.height);
+      if (haveMask && segCanvas.width && segCanvas.height) {
+        mc.drawImage(segCanvas, 0, 0, compositeMask.width, compositeMask.height);
+      }
+      if (manualOccludeMaskExists()){
+        mc.globalCompositeOperation = 'source-over';
+        mc.drawImage(maskPaint, 0, 0, compositeMask.width, compositeMask.height);
+        mc.globalCompositeOperation = 'source-over';
+      }
+
+      bgIsVideo = (bgKind === 'video');
+      ensureTextures();
+      if (maskTexture) maskTexture.needsUpdate = true;
+      if (bgTexture && !(bgTexture instanceof THREE.VideoTexture)) bgTexture.needsUpdate = true;
+
+      ensureDepthMesh();
+      if (imageDepthReady || bgKind === 'video') updateDepthMeshFromSceneDepth();
+
+      if (showDepth){
+        const width = occ.width, height = occ.height;
+        const full = upsampleDepthGrid(sceneDepthBuf, depthW, depthH, width, height);
+        let minD = Infinity, maxD = -Infinity;
+        for (let i = 0; i < full.length; i++){
+          const v = full[i];
+          if (Number.isFinite(v)){ if (v < minD) minD = v; if (v > maxD) maxD = v; }
+        }
+        if (!Number.isFinite(minD)) minD = 0.1, maxD = 10;
+        if (minD === maxD) maxD = minD + 1;
+
+        const img = depthOverlayCtx.createImageData(width, height);
+        const data = img.data;
+        for (let i = 0; i < full.length; i++){
+          const v = full[i];
+          let val = 0;
+          if (Number.isFinite(v)) { val = 1 - (v - minD) / (maxD - minD); val = Math.max(0, Math.min(1, val)); }
+          const c = Math.round(val * 255), p = i * 4;
+          data[p] = c; data[p+1] = c; data[p+2] = c; data[p+3] = 255;
+        }
+        depthOverlayCtx.putImageData(img, 0, 0);
+      }
+
+      renderer.render(scene, cam);
+      requestAnimationFrame(frame);
+    }
+
+    resize();
+    requestAnimationFrame(frame);
+    requestCamera();
+
+    if (typeof THREE === 'undefined' || !THREE.GLTFLoader) {
+      setStatus('3D library failed to load — an internet connection is needed to fetch three.js.', false, true);
+    }
+
+  } catch (err) {
+    console.error('Initialization error', err);
+    try { setStatus('Init error: ' + (err && err.message ? err.message : String(err)), false, true); } catch (e) {}
+  }
+})();
+</script>
+</body>
+</html>
