@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Local Android Emulator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--text:#1d1f23;--mut:#6b7280;--acc:#1a73e8;--bd:#d9dce1}
+@media (prefers-color-scheme:dark){:root{--bg:#121316;--card:#1c1e23;--text:#e8eaed;--mut:#9aa0a6;--acc:#8ab4f8;--bd:#33363d}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif}
+#setup{max-width:560px;margin:0 auto;padding:28px 18px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:14px}
+h1{font-size:22px;margin:0 0 4px} h2{font-size:15px;margin:0 0 10px}
+p,li,small{color:var(--mut);font-size:14px;line-height:1.5} ul{padding-left:18px;margin:6px 0 0}
+label{display:block;font-size:14px;margin:10px 0 4px}
+input[type=file],input[type=text],select{width:100%;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
+button{background:var(--acc);color:#000;border:0;border-radius:10px;padding:10px 18px;font:600 15px inherit;cursor:pointer}
+button.sec{background:var(--card);color:var(--text);border:1px solid var(--bd)}
+#go{width:100%;margin-top:8px;padding:14px}
+#log{color:var(--mut);font-size:13px;margin-top:8px;min-height:18px}
+#stage{display:none;position:fixed;inset:0;background:#000;flex-direction:column}
+#screen{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;overflow:hidden}
+#screen canvas{max-width:100%;max-height:100%;object-fit:contain;cursor:pointer}
+#bar{display:flex;gap:8px;padding:8px;background:#111;flex-wrap:wrap;align-items:center}
+#bar button{padding:7px 12px;font-size:13px;background:#2a2d33;color:#e8eaed}
+#bar span{color:#9aa0a6;font-size:12px;margin-left:auto}
+body.fs #bar{display:none}
+</style>
+</head>
+<body>
+<div id="setup">
+  <h1>Local Android Emulator</h1>
+  <p>Boots an Android-x86 image you provide, entirely on your machine, using the v86 x86 emulator.</p>
+
+  <div class="card">
+    <h2>1. Your image</h2>
+    <label>Android-x86 ISO (live CD)</label>
+    <input type="file" id="iso" accept=".iso,.img">
+    <label>Or a hard-disk image (optional)</label>
+    <input type="file" id="hda" accept=".img,.raw,.bin">
+    <small>Files are read locally and never uploaded.</small>
+  </div>
+
+  <div class="card">
+    <h2>2. Machine</h2>
+    <label>RAM: <b id="ramv">2048</b> MB</label>
+    <input type="range" id="ram" min="512" max="4096" step="256" value="2048" style="width:100%">
+    <label>Video memory: <b id="vramv">64</b> MB</label>
+    <input type="range" id="vram" min="8" max="256" step="8" value="64" style="width:100%">
+    <label>Enter fullscreen on start</label>
+    <select id="fsopt"><option value="1">Yes</option><option value="0">No</option></select>
+  </div>
+
+  <div class="card">
+    <h2>3. Emulator files <small>(advanced)</small></h2>
+    <label>v86 base URL</label>
+    <input type="text" id="base" value="https://cdn.jsdelivr.net/npm/v86@latest">
+    <small>Needs <code>build/libv86.js</code>, <code>build/v86.wasm</code>, <code>bios/seabios.bin</code>, <code>bios/vgabios.bin</code>. For fully offline use, download them into a folder next to this page and set this to <code>./v86</code>.</small>
+  </div>
+
+  <button id="go">Boot Android</button>
+  <div id="log"></div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Tips</h2>
+    <ul>
+      <li>Open this page over http, not file:// (browsers block WebAssembly from file URLs). In its folder run <code>python3 -m http.server 8000</code>, then visit <code>localhost:8000/android-emulator.html</code>.</li>
+      <li>Use an Android-x86 ISO (e.g. 9.0-r2). At the boot menu choose <b>Live CD – VESA mode</b>, or "Debug mode" if the screen stays black.</li>
+      <li>Expect slow boot (minutes). This is software emulation, not hardware-accelerated.</li>
+      <li>Click the screen to capture the mouse; <b>Esc</b> releases it and exits fullscreen.</li>
+    </ul>
+  </div>
+</div>
+
+<div id="stage">
+  <div id="screen"><div style="white-space:pre;font:14px monospace;line-height:14px;display:none"></div><canvas></canvas></div>
+  <div id="bar">
+    <button id="bfs">Fullscreen</button>
+    <button id="bpause">Pause</button>
+    <button id="bcad">Ctrl+Alt+Del</button>
+    <button id="breset">Reset</button>
+    <button id="bstop">Stop</button>
+    <span id="stat">booting…</span>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let emu=null;
+$('#ram').oninput=e=>$('#ramv').textContent=e.target.value;
+$('#vram').oninput=e=>$('#vramv').textContent=e.target.value;
+const log=m=>$('#log').textContent=m;
+
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('Could not load '+src));document.head.appendChild(s)})}
+
+async function boot(){
+  const iso=$('#iso').files[0],hda=$('#hda').files[0];
+  if(!iso&&!hda){log('Choose an ISO or disk image first.');return}
+  const base=$('#base').value.replace(/\/$/,'');
+  $('#go').disabled=true;log('Loading emulator…');
+  try{
+    if(!window.V86&&!window.V86Starter) await loadScript(base+'/build/libv86.js');
+    const V=window.V86||window.V86Starter;
+    const cfg={
+      wasm_path:base+'/build/v86.wasm',
+      memory_size:$('#ram').value*1024*1024,
+      vga_memory_size:$('#vram').value*1024*1024,
+      screen_container:$('#screen'),
+      bios:{url:base+'/bios/seabios.bin'},
+      vga_bios:{url:base+'/bios/vgabios.bin'},
+      boot_order:iso?0x213:0x123,
+      acpi:true,
+      autostart:true
+    };
+    if(iso)cfg.cdrom={buffer:iso};
+    if(hda)cfg.hda={buffer:hda};
+    $('#setup').style.display='none';
+    $('#stage').style.display='flex';
+    emu=new V(cfg);
+    emu.add_listener('emulator-ready',()=>$('#stat').textContent='running');
+    emu.add_listener('screen-set-mode',()=>{});
+    if($('#fsopt').value==='1')goFS();
+  }catch(err){
+    log(err.message+' — check the v86 base URL and that you are on http://, not file://');
+    $('#go').disabled=false;
+    $('#setup').style.display='';$('#stage').style.display='none';
+  }
+}
+
+function goFS(){
+  const el=document.documentElement;
+  (el.requestFullscreen||el.webkitRequestFullscreen).call(el).catch(()=>{});
+  document.body.classList.add('fs');
+  if(emu&&emu.lock_mouse)try{emu.lock_mouse()}catch(e){}
+}
+document.addEventListener('fullscreenchange',()=>{
+  if(!document.fullscreenElement)document.body.classList.remove('fs');
+});
+
+$('#go').onclick=boot;
+$('#bfs').onclick=goFS;
+$('#screen').onclick=()=>{if(emu&&emu.lock_mouse)try{emu.lock_mouse()}catch(e){}};
+$('#bpause').onclick=function(){
+  if(!emu)return;
+  if(emu.is_running()){emu.stop();this.textContent='Resume';$('#stat').textContent='paused'}
+  else{emu.run();this.textContent='Pause';$('#stat').textContent='running'}
+};
+$('#bcad').onclick=()=>emu&&emu.keyboard_send_scancodes([0x1d,0x38,0x53,0x53|0x80,0x38|0x80,0x1d|0x80]);
+$('#breset').onclick=()=>emu&&emu.restart();
+$('#bstop').onclick=()=>{
+  if(emu){emu.destroy();emu=null}
+  if(document.fullscreenElement)document.exitFullscreen();
+  location.reload();
+};
+</script>
+</body>
+</html>
