@@ -53,6 +53,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px s
 <label for="rcode">Shared code</label>
 <input type="text" id="rcode" maxlength="9" placeholder="XXXX-XXXX" autocapitalize="characters">
 <button class="btn w" id="rgo">Start camera</button>
+<p class="m">Camera blocked? <label style="display:inline;font-weight:400;text-decoration:underline;cursor:pointer">Choose a video<input type="file" id="rfile" accept="video/*" hidden></label> of the sender’s screen instead (film it with your camera app first).</p>
 <video id="vid" muted playsinline hidden></video>
 <div class="bar" id="pb" hidden><i id="pi"></i></div>
 <p class="m" id="st"></p>
@@ -128,13 +129,19 @@ function flash(sym,T,gs){
 let rx=null;
 function stopRx(){if(rx){rx.stream.getTracks().forEach(t=>t.stop());rx=null}$("vid").hidden=true;$("pb").hidden=true}
 const say=t=>$("st").textContent=t;
-$("rgo").onclick=async()=>{
+$("rgo").onclick=()=>startRx();
+$("rfile").onchange=e=>{const f=e.target.files[0];e.target.value="";if(f)startRx(f)};
+async function startRx(file){
   if(norm($("rcode").value).length!=8){say("Enter the 8-character code first.");return}
   stopRx();$("res").innerHTML="";
-  const P=params($("rcode").value);let stream;
-  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false})}
-  catch(e){say("Camera unavailable. Allow camera access, or open this page in your browser directly.");return}
-  const v=$("vid");v.srcObject=stream;v.hidden=false;await v.play();
+  const P=params($("rcode").value);let stream=null;const v=$("vid");
+  if(file){v.srcObject=null;v.src=URL.createObjectURL(file);v.muted=true;stream={getTracks:()=>[]}}
+  else{
+    try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false})}
+    catch(e){say("Camera blocked ("+(e&&e.name||"error")+"). This page isn’t being allowed to use the camera here. Film the sender’s screen with your camera app, then tap “Choose a video” below.");return}
+    v.removeAttribute("src");v.srcObject=stream}
+  v.hidden=false;v.onended=()=>{if(rx&&rx.stream===stream)say("The video ended before the whole transfer was read. Film it again, starting before the sender taps Start.")};
+  try{await v.play()}catch(e){say("Couldn’t play the video.");return}
   const cv=document.createElement("canvas");cv.width=cv.height=48;const cx=cv.getContext("2d",{willReadFrequently:true});
   const R=rx={stream,S:[],cands:[],lock:null};let lastT=-1;
   say("This code uses "+P.N+" flashing square"+(P.N>1?"s":"")+". Point the camera at the sender’s screen so it fills the view (any rotation works), then the sender taps Start.");
