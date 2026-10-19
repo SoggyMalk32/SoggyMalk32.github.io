@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flashdrop</title>
+<style>
+:root{--bg:#eef0ea;--fg:#141614;--mut:#5c635b;--card:#fbfcf9;--bd:#c9cfc4;--ac:#1f3d2b;--acf:#f3f7ef;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d100e;--fg:#e8ede4;--mut:#93a08f;--card:#161b17;--bd:#2b352d;--ac:#c7e8b5;--acf:#10200f}}
+:root[data-theme="dark"]{--bg:#0d100e;--fg:#e8ede4;--mut:#93a08f;--card:#161b17;--bd:#2b352d;--ac:#c7e8b5;--acf:#10200f}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 "Iowan Old Style",Georgia,serif}
+main{max-width:520px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:2rem;margin:8px 0 0;letter-spacing:-.02em}
+p.s{color:var(--mut);margin:4px 0 18px}
+.tabs{display:flex;border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-bottom:14px}
+.tabs button{flex:1;padding:12px;border:0;background:none;color:var(--fg);font:inherit;cursor:pointer}
+.tabs button[aria-selected=true]{background:var(--ac);color:var(--acf)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px}
+label{display:block;font-weight:600;margin:14px 0 6px}
+textarea,input[type=text],select{width:100%;font:inherit;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg)}
+textarea{min-height:90px;resize:vertical}
+input[type=text]{font-family:ui-monospace,Menlo,monospace;font-size:1.2rem;letter-spacing:.12em}
+.row{display:flex;gap:8px}
+.btn{padding:12px 16px;border-radius:8px;border:1px solid var(--ac);background:var(--ac);color:var(--acf);font:inherit;font-weight:600;cursor:pointer}
+.btn.o{background:none;color:var(--fg);border-color:var(--bd)}
+.btn.w{width:100%;margin-top:16px}
+.m{color:var(--mut);font-size:.9rem;margin:8px 0 0}
+video{width:100%;border-radius:8px;background:#000;margin-top:12px;aspect-ratio:4/3;object-fit:cover}
+.bar{height:8px;border-radius:4px;background:var(--bd);overflow:hidden;margin-top:10px}
+.bar i{display:block;height:100%;width:0;background:var(--ac)}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:10px}
+#fl{display:none;position:fixed;inset:0;z-index:99;background:#000;color:#3a3a3a;font:2rem sans-serif;text-align:center;padding-top:40vh}
+[hidden]{display:none!important}
+#fl .g{display:none;position:absolute;inset:0;grid-template:1fr 1fr/1fr 1fr;gap:4vmin;padding:4vmin}#fl .g i{background:#000}
+</style></head><body>
+<main>
+<h1>Flashdrop</h1>
+<p class="s">Send text or a tiny file by flashing your screen at another phone’s camera.</p>
+<div class="tabs" role="tablist"><button role="tab" id="t1" aria-selected="true">Send</button><button role="tab" id="t2" aria-selected="false">Receive</button></div>
+
+<section id="send" class="card">
+<label for="txt">Text</label><textarea id="txt" placeholder="Type a message…"></textarea>
+<label for="file">…or a file (up to 8 KB)</label><input type="file" id="file">
+<label for="grid">Flashing squares</label><select id="grid"><option value="1">1 (slowest)</option><option value="2" selected>4</option><option value="3">9</option><option value="4">16 (fastest)</option></select>
+<label for="scode">Shared code</label>
+<div class="row"><input type="text" id="scode" maxlength="9" placeholder="XXXX-XXXX" autocapitalize="characters"><button class="btn o" id="gen">New</button></div>
+<p class="m" id="info">Give the same code to the other person.</p>
+<button class="btn w" id="go">Start flashing</button>
+<p class="m">Set your brightness to max, and hold the phones 15–30 cm apart in a dim room.</p>
+</section>
+
+<section id="recv" class="card" hidden>
+<label for="rcode">Shared code</label>
+<input type="text" id="rcode" maxlength="9" placeholder="XXXX-XXXX" autocapitalize="characters">
+<button class="btn w" id="rgo">Start camera</button>
+<video id="vid" muted playsinline hidden></video>
+<div class="bar" id="pb" hidden><i id="pi"></i></div>
+<p class="m" id="st"></p>
+<div id="res"></div>
+</section>
+</main>
+<div id="fl"><span id="fm"></span><div class="g"><i></i><i></i><i></i><i></i></div></div>
+
+<script>
+const $=id=>document.getElementById(id),AL="ABCDEFGHJKLMNPQRSTUVWXYZ23456789",MAX=8192;
+const norm=c=>c.toUpperCase().replace(/[^A-Z0-9]/g,"");
+function fnv(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function mb(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+// The code sets: flash speed (100-160 ms), the sync pattern, and a keystream that scrambles the data.
+function params(code){const c=norm(code),r=mb(fnv(c));const T=100+Math.floor(r()*7)*10;const g=gridOf(c),N=g*g,pre=[];for(let q=0;q<N;q++){pre.push([1,0,1,0]);while(pre[q].length<16)pre[q].push(r()<.5?0:1)}return{T,g,N,pre,seed:fnv(c+"#key")}}
+function ks(seed,n){const r=mb(seed),o=new Uint8Array(n);for(let i=0;i<n;i++)o[i]=r()*256|0;return o}
+const CT=(()=>{const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
+function crc(b){let c=~0;for(const x of b)c=CT[(c^x)&255]^(c>>>8);return(~c)>>>0}
+const gridOf=c=>{const i=AL.indexOf(c[0]);return i<0?1:1+i%4};
+function setGrid(c,g){c=norm(c);const i=Math.max(0,AL.indexOf(c[0]));return AL[i-i%4+g-1]+c.slice(1)}
+function perms(g){const f=[(r,c)=>[r,c],(r,c)=>[c,g-1-r],(r,c)=>[g-1-r,g-1-c],(r,c)=>[g-1-c,r],(r,c)=>[r,g-1-c],(r,c)=>[c,r],(r,c)=>[g-1-r,c],(r,c)=>[g-1-c,g-1-r]];return f.slice(0,g==1?1:8).map(t=>{const p=[];for(let r=0;r<g;r++)for(let c=0;c<g;c++){const[a,b]=t(r,c);p.push(a*g+b)}return p})}
+function genCode(g){const a=new Uint8Array(8);crypto.getRandomValues(a);let s="";for(const x of a)s+=AL[x%32];s=setGrid(s,g);return s.slice(0,4)+"-"+s.slice(4)}
+function fmt(i){const c=norm(i.value).slice(0,8);i.value=c.length>4?c.slice(0,4)+"-"+c.slice(4):c}
+
+// tabs
+function tab(n){$("send").hidden=n!=1;$("recv").hidden=n!=2;$("t1").ariaSelected=n==1;$("t2").ariaSelected=n==2;if(n==1)stopRx()}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+const gv=()=>+$("grid").value;
+$("scode").value=genCode(gv());
+$("gen").onclick=()=>{$("scode").value=genCode(gv());upd()};
+$("grid").onchange=()=>{$("scode").value=setGrid($("scode").value,gv());fmt($("scode"));upd()};
+$("scode").oninput=()=>{fmt($("scode"));upd()};$("rcode").oninput=()=>fmt($("rcode"));
+function upd(){if(norm($("scode").value).length==8){const p=params($("scode").value);$("grid").value=p.g;$("info").textContent="This code means "+p.N+" square"+(p.N>1?"s":"")+", "+p.T+" ms per flash (about "+Math.round(p.N*1000/p.T/8*10)/10+" bytes/s). Changing the squares changes the code."}else $("info").textContent="Give the same code to the other person."}
+upd();
+
+// ---------- send ----------
+async function payload(){
+  const f=$("file").files[0];let type=0,name="",data;
+  if(f){type=1;name=f.name;data=new Uint8Array(await f.arrayBuffer())}else data=new TextEncoder().encode($("txt").value);
+  let nb=new TextEncoder().encode(name).slice(0,60);
+  const body=new Uint8Array(2+nb.length+data.length);body[0]=type;body[1]=nb.length;body.set(nb,2);body.set(data,2+nb.length);
+  return body}
+$("go").onclick=async()=>{
+  if(norm($("scode").value).length!=8){$("info").textContent="Enter or generate an 8-character code first.";return}
+  const body=await payload();
+  if(body.length<3||(!$("file").files[0]&&!$("txt").value)){$("info").textContent="Add some text or a file first.";return}
+  if(body.length>MAX){$("info").textContent="Too big. The limit is "+MAX+" bytes, because every bit is one flash.";return}
+  const P=params($("scode").value),n=body.length,all=new Uint8Array(3+n+4);
+  all[0]=n>>16;all[1]=n>>8&255;all[2]=n&255;all.set(body,3);const c=crc(body);
+  all[3+n]=c>>>24;all[4+n]=c>>>16&255;all[5+n]=c>>>8&255;all[6+n]=c&255;
+  const k=ks(P.seed,all.length),bits=[];
+  for(let i=0;i<all.length;i++){const b=all[i]^k[i];for(let j=7;j>=0;j--)bits.push(b>>j&1)}
+  const sym=[];for(let i=0;i<16;i++)sym.push(P.pre.map(p=>p[i]));
+  for(let i=0;i<bits.length;i+=P.N){const s=[];for(let q=0;q<P.N;q++)s.push(bits[i+q]||0);sym.push(s)}
+  sym.push(Array(P.N).fill(0),Array(P.N).fill(0));
+  const secs=Math.round(sym.length*P.T/1000);
+  $("info").textContent="Flashing for about "+(secs>90?Math.round(secs/60)+" min":secs+" s")+". Tap the screen to cancel.";
+  flash(sym,P.T,P.g)};
+function flash(sym,T,gs){
+  const ov=$("fl"),fm=$("fm"),g=ov.querySelector(".g");g.innerHTML="<i></i>".repeat(gs*gs);const cells=g.children,pd=gs==1?0:gs==2?4:gs==3?3:2;g.style.gridTemplate="repeat("+gs+",1fr)/repeat("+gs+",1fr)";g.style.gap=g.style.padding=pd+"vmin";ov.style.display="block";ov._on=1;
+  try{ov.requestFullscreen&&ov.requestFullscreen().catch(()=>{})}catch(e){}
+  const st=performance.now()+3500;
+  const stop=()=>{ov._on=0;ov.style.display="none";try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}};
+  ov.onclick=stop;
+  (function f(){
+    if(!ov._on)return;const now=performance.now(),i=Math.floor((now-st)/T);
+    if(i<0){g.style.display="none";fm.textContent=Math.ceil((st-now)/1000)}
+    else if(i>=sym.length){stop();return}
+    else{fm.textContent="";g.style.display="grid";for(let q=0;q<cells.length;q++)cells[q].style.background=sym[i][q]?"#fff":"#000"}
+    requestAnimationFrame(f)})()}
+
+// ---------- receive ----------
+let rx=null;
+function stopRx(){if(rx){rx.stream.getTracks().forEach(t=>t.stop());rx=null}$("vid").hidden=true;$("pb").hidden=true}
+const say=t=>$("st").textContent=t;
+$("rgo").onclick=async()=>{
+  if(norm($("rcode").value).length!=8){say("Enter the 8-character code first.");return}
+  stopRx();$("res").innerHTML="";
+  const P=params($("rcode").value);let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false})}
+  catch(e){say("Camera unavailable. Allow camera access, or open this page in your browser directly.");return}
+  const v=$("vid");v.srcObject=stream;v.hidden=false;await v.play();
+  const cv=document.createElement("canvas");cv.width=cv.height=48;const cx=cv.getContext("2d",{willReadFrequently:true});
+  const R=rx={stream,S:[],cands:[],lock:null};let lastT=-1;
+  say("This code uses "+P.N+" flashing square"+(P.N>1?"s":"")+". Point the camera at the sender’s screen so it fills the view (any rotation works), then the sender taps Start.");
+  const lum=()=>{const w=v.videoWidth,h=v.videoHeight;cx.drawImage(v,w*.1,h*.1,w*.8,h*.8,0,0,48,48);const d=cx.getImageData(0,0,48,48).data,G=P.g,N=P.N,q=new Array(N).fill(0),cs=48/G,a0=Math.floor(cs*.25),a1=Math.ceil(cs*.75),cnt=(a1-a0)*(a1-a0)*3;
+    for(let y=0;y<48;y++){const cy=Math.floor(y/cs),b=y-cy*cs;if(b<a0||b>=a1)continue;for(let x=0;x<48;x++){const cc=Math.floor(x/cs),a=x-cc*cs;if(a<a0||a>=a1)continue;const ix=(y*48+x)*4;q[cy*G+cc]+=d[ix]+d[ix+1]+d[ix+2]}}
+    let s=0;for(let i=0;i<N;i++){q[i]/=cnt;s+=q[i]}return{v:s/N,q}};
+  const nxt=()=>v.requestVideoFrameCallback?v.requestVideoFrameCallback(tick):requestAnimationFrame(tick);
+  function tick(now){
+    if(rx!==R)return;
+    if(!v.requestVideoFrameCallback&&v.currentTime===lastT){nxt();return}lastT=v.currentTime;
+    now=performance.now();const S=R.S;const L=lum();S.push({t:now,v:L.v,q:L.q});if(S.length>240)S.shift();
+    const n=S.length;
+    if(!R.lock&&n>3&&S[n-1].v-S[n-3].v>22&&R.cands.length<80)R.cands.push({t0:S[n-2].t,k:0,w:[]});
+    if(R.lock)adv(R.lock);else{for(const c of R.cands){adv(c);if(R.lock)break}R.cands=R.cands.filter(c=>!c.dead)}
+    nxt()}
+  function adv(c){
+    const S=R.S;
+    while(rx===R){
+      const ts=c.t0+P.T*(c.k+.5),h=P.T*.25;
+      if(S[S.length-1].t<ts+h)break;
+      let s=new Array(P.N).fill(0),m=0,best=S[0],bd=1e9;
+      for(let i=S.length-1;i>=0&&S[i].t>=ts-h-100;i--){const d=Math.abs(S[i].t-ts);if(d<bd){bd=d;best=S[i]}if(d<=h){for(let q=0;q<P.N;q++)s[q]+=S[i].q[q];m++}}
+      const w=m?s.map(x=>x/m):best.q.slice();c.k++;
+      if(!c.pre){c.w.push(w);if(c.k==16)check(c);continue}
+      for(let q=0;q<P.N;q++){const x=w[c.perm[q]],bit=x>(c.m1[q]+c.m0[q])/2?1:0;
+        if(bit)c.m1[q]+=(x-c.m1[q])*.08;else c.m0[q]+=(x-c.m0[q])*.08;c.bits.push(bit)}
+      if(c.len===undefined&&c.bits.length>=24){const k=ks(P.seed,3);c.len=((c.bits.slice(0,8).reduce((a,b)=>a*2+b,0)^k[0])<<16)|((c.bits.slice(8,16).reduce((a,b)=>a*2+b,0)^k[1])<<8)|(c.bits.slice(16,24).reduce((a,b)=>a*2+b,0)^k[2]);
+        if(c.len<2||c.len>MAX){fail("Header looked wrong. Try again.");return}c.total=(3+c.len+4)*8}
+      if(c.total){const p=Math.min(1,c.bits.length/c.total);$("pi").style.width=p*100+"%";say("Receiving… "+Math.round(p*100)+"%");if(c.bits.length>=c.total){finish(c);return}}
+    }}
+  function check(c){
+    // try all 8 rotations/mirrors of the 2x2 layout; the code-derived pattern tells us which one is right
+    const PM=perms(P.g);let best=null;
+    for(const pm of PM){let bad=0,M1=[],M0=[],ok=1;
+      for(let q=0;q<P.N;q++){let a=0,na=0,b=0,nb=0;P.pre[q].forEach((p,i)=>{const x=c.w[i][pm[q]];if(p){a+=x;na++}else{b+=x;nb++}});
+        const m1=a/na,m0=b/nb,t=(m1+m0)/2;M1.push(m1);M0.push(m0);if(m1-m0<15)ok=0;P.pre[q].forEach((p,i)=>{if((c.w[i][pm[q]]>t?1:0)!=p)bad++})}
+      if(ok&&bad<=Math.floor(P.N*.72)+1&&(!best||bad<best.bad))best={pm,bad,M1,M0}}
+    if(!best){c.dead=1;return}
+    c.pre=1;c.perm=best.pm;c.m1=best.M1;c.m0=best.M0;c.bits=[];c.w=null;R.lock=c;R.cands=[];$("pb").hidden=false;say("Code matched. Receiving…")}
+  function fail(t){say(t);R.lock=null;R.cands=[]}
+  function finish(c){
+    const k=ks(P.seed,3+c.len+4),by=new Uint8Array(3+c.len+4);
+    for(let i=0;i<by.length;i++){let x=0;for(let j=0;j<8;j++)x=x*2+c.bits[i*8+j];by[i]=x^k[i]}
+    const body=by.slice(3,3+c.len),got=((by[3+c.len]<<24)|(by[4+c.len]<<16)|(by[5+c.len]<<8)|by[6+c.len])>>>0;
+    if(crc(body)!==got){fail("Some bits were misread. Raise the sender’s brightness, hold steadier, dim the room, and try again.");return}
+    const type=body[0],nl=body[1],name=new TextDecoder().decode(body.slice(2,2+nl)),data=body.slice(2+nl);
+    stopRx();say("Received "+data.length+" bytes. Checksum passed.");const res=$("res");res.innerHTML="";
+    if(type==0){const pre=document.createElement("pre");pre.textContent=new TextDecoder().decode(data);res.append(pre);
+      const b=document.createElement("button");b.className="btn o";b.textContent="Copy text";b.onclick=()=>{try{navigator.clipboard.writeText(pre.textContent);b.textContent="Copied"}catch(e){}};res.append(b)}
+    else{const a=document.createElement("a");a.className="btn";a.style.display="inline-block";a.style.textDecoration="none";a.textContent="Save "+(name||"file");a.download=name||"file";a.target="_blank";a.href=URL.createObjectURL(new Blob([data]));res.append(a)}}
+  nxt()};
+</script>
+</body></html>
